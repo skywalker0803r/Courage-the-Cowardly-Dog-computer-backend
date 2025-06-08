@@ -13,7 +13,7 @@ def ask():
     if not user_message:
         return jsonify({"error": "No message provided"}), 400
     try:
-        reply = query_fireworks(user_message)
+        reply = query(user_message)
         return jsonify({"reply": reply})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
