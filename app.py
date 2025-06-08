@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from computer_logic import query_fireworks
+from computer_logic import query
 
 
 app = Flask(__name__)
