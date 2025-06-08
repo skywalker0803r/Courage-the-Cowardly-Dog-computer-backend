@@ -9,7 +9,7 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
-def query_gemini(user_message: str) -> str:
+def query(user_message: str) -> str:
     payload = {
         "contents": [
             {
