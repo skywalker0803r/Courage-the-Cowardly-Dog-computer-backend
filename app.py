@@ -20,5 +20,3 @@ def ask():
 
 if __name__ == "__main__":
     app.run(debug=True)
-
-# 我想把他部屬到render這邊怎麼改
