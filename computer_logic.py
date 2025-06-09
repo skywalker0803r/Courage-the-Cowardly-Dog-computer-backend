@@ -1,6 +1,7 @@
 import requests
 import os
 import json
+import psycopg2
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -10,20 +11,42 @@ API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-f
 HEADERS = {
     "Content-Type": "application/json"
 }
-HISTORY_FILE = "conversation_history.json"
+
 MAX_INPUT_TOKENS = 50_000          # 自訂安全預算（遠小於 1M，請求速度更快）
 TRIM_BACK_TO    = 40_000           # 超過就把最舊內容摘要
 
 def load_history():
-    if os.path.exists(HISTORY_FILE):
-        with open(HISTORY_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    else:
-        return []
+    conn = psycopg2.connect(os.environ['DATABASE_URL'])
+    cur = conn.cursor()
+    cur.execute("SELECT role, content FROM conversation_history ORDER BY id ASC")
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    # 將資料轉成原本的格式 list[dict]
+    history = []
+    for role, content in rows:
+        history.append({
+            "role": role,
+            "parts": [{"text": content}]
+        })
+    return history
 
 def save_history(history):
-    with open(HISTORY_FILE, "w", encoding="utf-8") as f:
-        json.dump(history, f, ensure_ascii=False, indent=2)
+    conn = psycopg2.connect(os.environ['DATABASE_URL'])
+    cur = conn.cursor()
+    # 清空舊資料
+    cur.execute("DELETE FROM conversation_history")
+    # 重新插入全部歷史紀錄
+    for entry in history:
+        role = entry.get("role", "")
+        content = "".join(p["text"] for p in entry.get("parts", []))
+        cur.execute(
+            "INSERT INTO conversation_history (role, content) VALUES (%s, %s)",
+            (role, content)
+        )
+    conn.commit()
+    cur.close()
+    conn.close()
 
 # 單獨用來呼叫 Gemini API 做摘要，避免呼叫 query 避免遞迴。
 def generate_summary(text: str) -> str:
