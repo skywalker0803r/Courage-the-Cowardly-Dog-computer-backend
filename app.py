@@ -1,10 +1,34 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from computer_logic import query
-
+import os
+import base64
+import json
+from google.cloud import texttospeech
+from google.oauth2 import service_account
 
 app = Flask(__name__)
-CORS(app)  # 解鎖前端跨域存取
+CORS(app)
+credentials = service_account.Credentials.from_service_account_info(json.loads(os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")))
+tts_client = texttospeech.TextToSpeechClient(credentials=credentials)
+
+def text_to_speech(text):
+    synthesis_input = texttospeech.SynthesisInput(text=text)
+
+    voice = texttospeech.VoiceSelectionParams(
+        language_code="cmn-CN",  
+        name="cmn-CN-Chirp3-HD-Fenrir"
+    )
+    audio_config = texttospeech.AudioConfig(audio_encoding=texttospeech.AudioEncoding.MP3)
+
+    response = tts_client.synthesize_speech(
+        input=synthesis_input,
+        voice=voice,
+        audio_config=audio_config
+    )
+    # 將音訊內容轉 base64 字串
+    audio_base64 = base64.b64encode(response.audio_content).decode("utf-8")
+    return audio_base64
 
 @app.route("/ask", methods=["POST"])
 def ask():
@@ -14,7 +38,8 @@ def ask():
         return jsonify({"error": "No message provided"}), 400
     try:
         reply = query(user_message)
-        return jsonify({"reply": reply})
+        audio_base64 = text_to_speech(reply)
+        return jsonify({"reply": reply, "audio": audio_base64})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

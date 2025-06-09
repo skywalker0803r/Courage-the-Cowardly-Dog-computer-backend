@@ -4,3 +4,5 @@ python-dotenv
 requests
 gunicorn
 psycopg2-binary
+google-cloud-texttospeech 
+google-auth
