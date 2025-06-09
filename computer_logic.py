@@ -15,6 +15,38 @@ HEADERS = {
 MAX_INPUT_TOKENS = 50_000          # 自訂安全預算（遠小於 1M，請求速度更快）
 TRIM_BACK_TO    = 40_000           # 超過就把最舊內容摘要
 
+def split_text(text, max_bytes=900):
+    import re
+    # 先依句號、問號、感嘆號、換行符等斷句符號分割
+    sentences = re.split(r'(?<=[。.!?？\n])', text)
+    parts = []
+    buffer = ""
+
+    for s in sentences:
+        # 嘗試把句子加到 buffer
+        if len((buffer + s).encode('utf-8')) > max_bytes:
+            # 如果加了會超長，先把現有 buffer 當一段存起來
+            if buffer:
+                parts.append(buffer)
+                buffer = s
+            else:
+                # 單句超長，強制切割成多段
+                bytes_s = s.encode('utf-8')
+                start = 0
+                while start < len(bytes_s):
+                    chunk = bytes_s[start:start + max_bytes]
+                    # decode時忽略破字元
+                    parts.append(chunk.decode('utf-8', errors='ignore'))
+                    start += max_bytes
+                buffer = ""
+        else:
+            buffer += s
+
+    if buffer:
+        parts.append(buffer)
+    return parts
+
+
 def load_history():
     conn = psycopg2.connect(os.environ['DATABASE_URL'])
     cur = conn.cursor()
@@ -22,12 +54,13 @@ def load_history():
     rows = cur.fetchall()
     cur.close()
     conn.close()
-    # 將資料轉成原本的格式 list[dict]
+
     history = []
     for role, content in rows:
+        parts = split_text(content)
         history.append({
             "role": role,
-            "parts": [{"text": content}]
+            "parts": [{"text": part} for part in parts]
         })
     return history
 
