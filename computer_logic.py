@@ -9,18 +9,14 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
+conversation_history = []
+
 def query(user_message: str) -> str:
+    # 將使用者的輸入加入對話歷史
+    conversation_history.append({"role": "user", "parts": [{"text": user_message}]})
+
     payload = {
-        "contents": [
-            {
-                "role": "user",
-                "parts": [
-                    {
-                        "text": user_message
-                    }
-                ]
-            }
-        ],
+        "contents": conversation_history.copy(),
         "system_instruction": {
             "parts": [
                 {
@@ -37,4 +33,10 @@ def query(user_message: str) -> str:
     candidates = response.json().get("candidates", [])
     if not candidates:
         return "No response from Gemini."
-    return candidates[0]["content"]["parts"][0]["text"]
+
+    ai_response = candidates[0]["content"]["parts"][0]["text"]
+    
+    # 把 AI 回應加入對話歷史
+    conversation_history.append({"role": "model", "parts": [{"text": ai_response}]})
+
+    return ai_response
