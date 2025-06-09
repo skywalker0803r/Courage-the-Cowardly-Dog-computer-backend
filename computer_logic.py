@@ -15,36 +15,35 @@ HEADERS = {
 MAX_INPUT_TOKENS = 50_000          # 自訂安全預算（遠小於 1M，請求速度更快）
 TRIM_BACK_TO    = 40_000           # 超過就把最舊內容摘要
 
-def split_text(text, max_bytes=900):
+def split_text(text: str, max_bytes: int = 700) -> list[str]:
     import re
-    # 先依句號、問號、感嘆號、換行符等斷句符號分割
-    sentences = re.split(r'(?<=[。.!?？\n])', text)
-    parts = []
+    sentences = re.split(r'(?<=[。！？!?，,\n ])', text)
+    result = []
     buffer = ""
-
-    for s in sentences:
-        # 嘗試把句子加到 buffer
-        if len((buffer + s).encode('utf-8')) > max_bytes:
-            # 如果加了會超長，先把現有 buffer 當一段存起來
+    for sentence in sentences:
+        if len((buffer + sentence).encode("utf-8")) > max_bytes:
             if buffer:
-                parts.append(buffer)
-                buffer = s
-            else:
-                # 單句超長，強制切割成多段
-                bytes_s = s.encode('utf-8')
-                start = 0
-                while start < len(bytes_s):
-                    chunk = bytes_s[start:start + max_bytes]
-                    # decode時忽略破字元
-                    parts.append(chunk.decode('utf-8', errors='ignore'))
-                    start += max_bytes
-                buffer = ""
+                result.append(buffer.strip())
+            buffer = sentence
         else:
-            buffer += s
-
+            buffer += sentence
     if buffer:
-        parts.append(buffer)
-    return parts
+        result.append(buffer.strip())
+    
+    # 如果句子太少且總長仍超過限制，再次強制切
+    final = []
+    for segment in result:
+        b = b""
+        t = ""
+        for char in segment:
+            t += char
+            b = t.encode("utf-8")
+            if len(b) > max_bytes:
+                final.append(t[:-1].strip())
+                t = char
+        if t:
+            final.append(t.strip())
+    return final
 
 
 def load_history():
@@ -90,11 +89,8 @@ def generate_summary(text: str) -> str:
         "contents": [
             {
                 "role": "user",
-                "parts": [
-                    {
-                        "text": f"請用 150 字以內摘要下列對話，保留結論或事項：\n{text}"
-                    }
-                ]
+                "parts": [{"text": part} for part in split_text(f"請用 150 字以內摘要下列對話，保留結論或事項：\n{text}")]
+
             }
         ],
         "system_instruction": {
@@ -144,7 +140,8 @@ def query(user_message: str) -> str:
     # 載入對話歷史
     conversation_history = load_history()
     # 將使用者的輸入加入對話歷史
-    conversation_history.append({"role": "user", "parts": [{"text": user_message}]})
+    user_parts = [{"text": part} for part in split_text(user_message)]
+    conversation_history.append({"role": "user", "parts": user_parts})
     # 先檢查並修剪
     trim_history(conversation_history)
     # 製作payload 放 歷史對話 跟 引導
