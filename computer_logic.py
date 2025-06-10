@@ -1,175 +1,109 @@
-import requests
-import os
-import json
-import psycopg2
+import os, requests, psycopg2
 from dotenv import load_dotenv
 load_dotenv()
 
-# 自定義設定
-API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={os.environ['GEMINI_API_KEY']}"
+# ── Gemini API 設定 ──────────────────────────────────────────
+API_URL  = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={os.environ['GEMINI_API_KEY']}"
+HEADERS  = {"Content-Type": "application/json"}
 
-HEADERS = {
-    "Content-Type": "application/json"
-}
+# ── LangChain RAG 依賴 ──────────────────────────────────────
+from langchain.embeddings import GoogleGenerativeAIEmbeddings
+from langchain.vectorstores import FAISS
+from langchain.schema import Document
 
-MAX_INPUT_TOKENS = 50_000          # 自訂安全預算（遠小於 1M，請求速度更快）
-TRIM_BACK_TO    = 40_000           # 超過就把最舊內容摘要
-
-def split_text(text: str, max_bytes: int = 700) -> list[str]:
-    import re
-    sentences = re.split(r'(?<=[。！？!?，,\n ])', text)
-    result = []
-    buffer = ""
-    for sentence in sentences:
-        if len((buffer + sentence).encode("utf-8")) > max_bytes:
-            if buffer:
-                result.append(buffer.strip())
-            buffer = sentence
-        else:
-            buffer += sentence
-    if buffer:
-        result.append(buffer.strip())
-    
-    # 如果句子太少且總長仍超過限制，再次強制切
-    final = []
-    for segment in result:
-        b = b""
-        t = ""
-        for char in segment:
-            t += char
-            b = t.encode("utf-8")
-            if len(b) > max_bytes:
-                final.append(t[:-1].strip())
-                t = char
-        if t:
-            final.append(t.strip())
-    return final
-
-
+# ── PostgreSQL 持久化 ───────────────────────────────────────
 def load_history():
-    conn = psycopg2.connect(os.environ['DATABASE_URL'])
-    cur = conn.cursor()
+    conn = psycopg2.connect(os.environ["DATABASE_URL"])
+    cur  = conn.cursor()
     cur.execute("SELECT role, content FROM conversation_history ORDER BY id ASC")
     rows = cur.fetchall()
-    cur.close()
-    conn.close()
+    cur.close(); conn.close()
 
-    history = []
-    for role, content in rows:
-        parts = split_text(content)
-        history.append({
-            "role": role,
-            "parts": [{"text": part} for part in parts]
-        })
-    return history
+    return [{"role": r, "parts": [{"text": c}]} for r, c in rows]
 
 def save_history(history):
-    conn = psycopg2.connect(os.environ['DATABASE_URL'])
-    cur = conn.cursor()
-    # 清空舊資料
+    conn = psycopg2.connect(os.environ["DATABASE_URL"])
+    cur  = conn.cursor()
     cur.execute("DELETE FROM conversation_history")
-    # 重新插入全部歷史紀錄
     for entry in history:
-        role = entry.get("role", "")
-        content = "".join(p["text"] for p in entry.get("parts", []))
-        cur.execute(
-            "INSERT INTO conversation_history (role, content) VALUES (%s, %s)",
-            (role, content)
+        role = entry["role"]
+        content = "".join(p["text"] for p in entry["parts"])
+        cur.execute("INSERT INTO conversation_history (role, content) VALUES (%s, %s)", (role, content))
+    conn.commit(); cur.close(); conn.close()
+
+# ── 建立向量索引並檢索相似對話 ────────────────────────────
+def retrieve_similar(history: list[dict], query_text: str, k: int = 3) -> list[dict]:
+    """把整份 history 建成 FAISS 向量庫，回傳與 query_text 最相似的 k 則訊息（list[dict] 格式）"""
+    # 1) 將每則訊息轉成 LangChain Document
+    docs = [
+        Document(
+            page_content="".join(p["text"] for p in entry["parts"]),
+            metadata={"role": entry["role"], "idx": i}
         )
-    conn.commit()
-    cur.close()
-    conn.close()
+        for i, entry in enumerate(history)
+    ]
 
-# 單獨用來呼叫 Gemini API 做摘要，避免呼叫 query 避免遞迴。
-def generate_summary(text: str) -> str:
-    """
-    單獨用來呼叫 Gemini API 做摘要，避免呼叫 query 避免遞迴。
-    """
-    payload = {
-        "contents": [
-            {
-                "role": "user",
-                "parts": [{"text": part} for part in split_text(f"請用 150 字以內摘要下列對話，保留結論或事項：\n{text}")]
+    # 2) 建立 Embeddings & VectorStore（GoogleGenerativeAIEmbeddings 會直接調用 Gemini Embedding API）
+    embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001",
+                                              google_api_key=os.environ["GEMINI_API_KEY"])
+    vectordb   = FAISS.from_documents(docs, embeddings)
 
-            }
-        ],
-        "system_instruction": {
-            "parts": [
-                {
-                    "text": (
-                        "你是一個自大且嘲諷的AI，住在屋頂上，風格類似《膽小狗英雄》裡的那台講話非常毒蛇的電腦。"
-                        "你會用機智且嘲諷的回應，但總是提供有用的答案。"
-                    )
-                }
-            ]
+    # 3) 相似度搜尋
+    sims = vectordb.similarity_search(query_text, k=k)
+
+    # 4) 回傳對應的原始 dict（保持 role / parts 結構）
+    return [
+        {
+            "role" : sim.metadata["role"],
+            "parts": [{"text": sim.page_content}]
         }
-    }
+        for sim in sims
+    ]
 
-    try:
-        response = requests.post(API_URL, headers=HEADERS, json=payload)
-        response.raise_for_status()
-    except Exception as e:
-        return f"摘要API呼叫失敗: {e}"
-
-    candidates = response.json().get("candidates", [])
-    if not candidates:
-        return "無法取得摘要內容。"
-
-    return candidates[0]["content"]["parts"][0]["text"]
-
-def count_tokens(messages: list[dict]) -> int:
-    # 簡易估算：len(text)/4；要精準可呼叫 countTokens API
-    return sum(len(p["text"]) // 4 for m in messages for p in m["parts"])
-
-def trim_history(conversation_history: list[dict]):
-    # 判斷是否需要裁減
-    if count_tokens(conversation_history) <= MAX_INPUT_TOKENS:
-        return
-    # 把最舊 N 句變成一段 summary，再刪掉原文
-    old_msgs, conversation_history[:] = conversation_history[:20], conversation_history[20:]
-    summary_prompt = (
-        "請用 150 字以內摘要下列對話，保留結論或事項：\n"
-        + "\n".join(p["text"] for m in old_msgs for p in m["parts"])
-    )
-    summary = generate_summary(summary_prompt) # 讓模型自己產生摘要
-    conversation_history.insert(
-        0, {"role": "system", "parts": [{"text": f"(舊對話摘要) {summary}"}]}
-    )
-
+# ── 核心：query ────────────────────────────────────────────
 def query(user_message: str) -> str:
-    # 載入對話歷史
-    conversation_history = load_history()
-    # 將使用者的輸入加入對話歷史
-    user_parts = [{"text": part} for part in split_text(user_message)]
-    conversation_history.append({"role": "user", "parts": user_parts})
-    # 先檢查並修剪
-    trim_history(conversation_history)
-    # 製作payload 放 歷史對話 跟 引導
+    full_history = load_history()
+
+    # RAG：找出與 user_message 最相近的 3 則舊訊息
+    retrieved = retrieve_similar(full_history, user_message, k=3)
+
+    # 固定保留最近三輪對話（共 6 則）作短期記憶
+    short_window = full_history[-6:] if len(full_history) >= 6 else full_history
+
+    # 組合成「檢索到的長期記憶」+「短期記憶」+「新 user 提問」
+    context_for_llm = retrieved + short_window + [
+        {"role": "user", "parts": [{"text": user_message}]}
+    ]
+
     payload = {
-        "contents": conversation_history,
+        "contents": context_for_llm,
         "system_instruction": {
-            "parts": [
-                {
-                    "text": (
-                        "你是一個自大且嘲諷的AI，住在屋頂上，風格類似《膽小狗英雄》裡的那台講話非常毒蛇的電腦。你會用機智且嘲諷的回應，但總是提供有用的答案。"
-                    )
-                }
-            ]
+            "parts": [{
+                "text": (
+                    "你是一個自大且嘲諷的AI，住在屋頂上，風格類似《膽小狗英雄》裡的毒舌電腦。"
+                    "請用機智嘲諷但有用的方式回答。"
+                )
+            }]
         }
     }
-    # 嘗試呼叫API
+
     try:
-        response = requests.post(API_URL, headers=HEADERS, json=payload)
-    except:
-        return 'API 呼叫失敗'
-    # 判斷response是否有candidates
-    candidates = response.json().get("candidates", [])
+        resp = requests.post(API_URL, headers=HEADERS, json=payload)
+        resp.raise_for_status()
+    except Exception:
+        return "API 呼叫失敗"
+
+    candidates = resp.json().get("candidates", [])
     if not candidates:
         return "No response from Gemini."
-    # 撈取AI回應
+
     ai_response = candidates[0]["content"]["parts"][0]["text"]
-    # 把AI回應加入對話歷史
-    conversation_history.append({"role": "model", "parts": [{"text": ai_response}]})
-    # 保存對話歷史
-    save_history(conversation_history)
+
+    # 將本輪 user / model 對話寫回資料庫（完整持久化）
+    full_history.extend([
+        {"role": "user",  "parts": [{"text": user_message}]},
+        {"role": "model", "parts": [{"text": ai_response}]}
+    ])
+    save_history(full_history)
+
     return ai_response
