@@ -2,6 +2,8 @@ from langchain.vectorstores import FAISS
 from langchain.embeddings import HuggingFaceEmbeddings
 from langchain.schema import Document
 import os, requests, psycopg2
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -30,31 +32,21 @@ def save_history(history):
     conn.commit(); cur.close(); conn.close()
 
 # ── 建立向量索引並檢索相似對話 ────────────────────────────
-embedding_model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 def retrieve_similar(history: list[dict], query_text: str, k: int = 3) -> list[dict]:
-    """將 history 全部轉向量，用 FAISS 找出與 query_text 最相近的 k 筆紀錄"""
-    # 1. 將歷史轉成 Document 格式
-    docs = [
-        Document(
-            page_content="".join(p["text"] for p in entry["parts"]),
-            metadata={"role": entry["role"], "idx": i}
-        )
-        for i, entry in enumerate(history)
-    ]
+    texts = ["".join(p["text"] for p in entry["parts"]) for entry in history]
+    vectorizer = TfidfVectorizer()
+    tfidf_matrix = vectorizer.fit_transform(texts)  # 對話歷史文本向量
+    query_vec = vectorizer.transform([query_text]) # 查詢文本向量
+    
+    similarities = cosine_similarity(query_vec, tfidf_matrix).flatten()
+    top_indices = similarities.argsort()[-k:][::-1]
 
-    # 2. 建立向量庫（in-memory，無需 API）
-    vectordb = FAISS.from_documents(docs, embedding_model)
-
-    # 3. 相似度搜尋
-    sims = vectordb.similarity_search(query_text, k=k)
-
-    # 4. 回傳原始格式（dict）
     return [
         {
-            "role": sim.metadata["role"],
-            "parts": [{"text": sim.page_content}]
+            "role": history[i]["role"],
+            "parts": [{"text": texts[i]}]
         }
-        for sim in sims
+        for i in top_indices
     ]
 
 # ── 核心：query ────────────────────────────────────────────
