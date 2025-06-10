@@ -9,3 +9,4 @@ google-auth
 langchain
 langchain-community
 sentence-transformers
+scikit-learn
