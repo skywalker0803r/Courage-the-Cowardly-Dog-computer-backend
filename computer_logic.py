@@ -53,11 +53,12 @@ def retrieve_similar(history: list[dict], query_text: str, k: int = 3) -> list[d
 def query(user_message: str) -> str:
     full_history = load_history()
 
-    # RAG：找出與 user_message 最相近的 3 則舊訊息
-    retrieved = retrieve_similar(full_history, user_message, k=3)
+    # RAG：找出與 user_message 最相近的 k 則舊訊息
+    retrieved = retrieve_similar(full_history, user_message, k=1)
 
-    # 固定保留最近三輪對話（共 6 則）作短期記憶
-    short_window = full_history[-6:] if len(full_history) >= 6 else full_history
+    # 固定保留最近三輪對話（共 n 則）作短期記憶
+    n = 2
+    short_window = full_history[-n:]
 
     # 組合成「檢索到的長期記憶」+「短期記憶」+「新 user 提問」
     context_for_llm = retrieved + short_window + [
