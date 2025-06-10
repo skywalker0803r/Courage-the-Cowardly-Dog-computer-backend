@@ -8,3 +8,4 @@ google-cloud-texttospeech
 google-auth
 langchain
 langchain-community
+sentence-transformers
