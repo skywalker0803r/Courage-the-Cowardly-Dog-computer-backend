@@ -1,3 +1,6 @@
+from langchain.vectorstores import FAISS
+from langchain.embeddings import HuggingFaceEmbeddings
+from langchain.schema import Document
 import os, requests, psycopg2
 from dotenv import load_dotenv
 load_dotenv()
@@ -5,11 +8,6 @@ load_dotenv()
 # ── Gemini API 設定 ──────────────────────────────────────────
 API_URL  = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={os.environ['GEMINI_API_KEY']}"
 HEADERS  = {"Content-Type": "application/json"}
-
-# ── LangChain RAG 依賴 ──────────────────────────────────────
-from langchain.embeddings import GoogleGenerativeAIEmbeddings
-from langchain.vectorstores import FAISS
-from langchain.schema import Document
 
 # ── PostgreSQL 持久化 ───────────────────────────────────────
 def load_history():
@@ -32,9 +30,10 @@ def save_history(history):
     conn.commit(); cur.close(); conn.close()
 
 # ── 建立向量索引並檢索相似對話 ────────────────────────────
+embedding_model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 def retrieve_similar(history: list[dict], query_text: str, k: int = 3) -> list[dict]:
-    """把整份 history 建成 FAISS 向量庫，回傳與 query_text 最相似的 k 則訊息（list[dict] 格式）"""
-    # 1) 將每則訊息轉成 LangChain Document
+    """將 history 全部轉向量，用 FAISS 找出與 query_text 最相近的 k 筆紀錄"""
+    # 1. 將歷史轉成 Document 格式
     docs = [
         Document(
             page_content="".join(p["text"] for p in entry["parts"]),
@@ -43,18 +42,16 @@ def retrieve_similar(history: list[dict], query_text: str, k: int = 3) -> list[d
         for i, entry in enumerate(history)
     ]
 
-    # 2) 建立 Embeddings & VectorStore（GoogleGenerativeAIEmbeddings 會直接調用 Gemini Embedding API）
-    embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001",
-                                              google_api_key=os.environ["GEMINI_API_KEY"])
-    vectordb   = FAISS.from_documents(docs, embeddings)
+    # 2. 建立向量庫（in-memory，無需 API）
+    vectordb = FAISS.from_documents(docs, embedding_model)
 
-    # 3) 相似度搜尋
+    # 3. 相似度搜尋
     sims = vectordb.similarity_search(query_text, k=k)
 
-    # 4) 回傳對應的原始 dict（保持 role / parts 結構）
+    # 4. 回傳原始格式（dict）
     return [
         {
-            "role" : sim.metadata["role"],
+            "role": sim.metadata["role"],
             "parts": [{"text": sim.page_content}]
         }
         for sim in sims
