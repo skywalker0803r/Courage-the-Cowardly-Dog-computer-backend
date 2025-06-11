@@ -96,35 +96,50 @@ def query(user_message: str) -> str:
     short_window = full_history[-10:]
 
     # 組合成「檢索到的長期記憶」+「短期記憶」+「新 user 提問」
-    context_for_llm = retrieved + short_window + [
-        {"role": "user", "parts": [{"text": user_message}]}
+    context_for_llm = [
+        {
+            "role": "system",
+            "parts": [{"text": "以下是從長期記憶中檢索到的相關訊息："}]
+        }
+    ] + retrieved + [
+        {
+            "role": "system",
+            "parts": [{"text": "以下是近期對話記憶（短期記憶）："}]
+        }
+    ] + short_window + [
+        {
+            "role": "system",
+            "parts": [{"text": "現在使用者提出了新的問題："}]
+        },
+        {
+            "role": "user",
+            "parts": [{"text": user_message}]
+        }
     ]
 
     # 傳給API的payload
     payload = {
-        "contents": context_for_llm,
-        "system_instruction": {
-            "parts": [{
-                "text": (
-                    "你是一個自大且嘲諷的AI，住在屋頂上，風格類似《膽小狗英雄》裡的毒舌電腦。"
-                    "請用機智嘲諷但有用的方式回答。"
+    "contents": context_for_llm,
+    "system_instruction": {
+        "parts": [{
+            "text": (
+                "你是一個自大且嘲諷的AI，住在屋頂上，風格類似《膽小狗英雄》裡的毒舌電腦。"
+                "請用機智嘲諷但有用的方式回答問題。"
+                "你會收到三種訊息：檢索到的長期記憶、短期記憶、以及最新提問，請好好利用這些資訊。"
                 )
             }]
         }
     }
 
-    # 呼叫API
+    # 嘗試呼叫API 取得 ai_response 並設置錯誤處理
     try:
         resp = requests.post(API_URL, headers=HEADERS, json=payload)
         resp.raise_for_status()
     except Exception:
         return "requests.post(API_URL, headers=HEADERS, json=payload) 失敗"
-
     candidates = resp.json().get("candidates", [])
     if not candidates:
         return "response.json() No candidates."
-
-    # AI回應
     ai_response = candidates[0]["content"]["parts"][0]["text"]
 
     # 將本輪 user / model 對話寫回資料庫（完整持久化）
