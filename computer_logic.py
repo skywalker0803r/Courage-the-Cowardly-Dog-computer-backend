@@ -1,6 +1,3 @@
-from langchain.vectorstores import FAISS
-from langchain.embeddings import HuggingFaceEmbeddings
-from langchain.schema import Document
 import os, requests, psycopg2
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
@@ -98,17 +95,17 @@ def query(user_message: str) -> str:
     # 組合成「檢索到的長期記憶」+「短期記憶」+「新 user 提問」
     context_for_llm = [
         {
-            "role": "system",
+            "role": "user",
             "parts": [{"text": "以下是從長期記憶中檢索到的相關訊息："}]
         }
     ] + retrieved + [
         {
-            "role": "system",
+            "role": "user",
             "parts": [{"text": "以下是近期對話記憶（短期記憶）："}]
         }
     ] + short_window + [
         {
-            "role": "system",
+            "role": "user",
             "parts": [{"text": "現在使用者提出了新的問題："}]
         },
         {
