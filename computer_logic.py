@@ -135,8 +135,8 @@ def query(user_message: str) -> str:
     try:
         resp = requests.post(API_URL, headers=HEADERS, json=payload)
         resp.raise_for_status()
-    except Exception:
-        return "requests.post(API_URL, headers=HEADERS, json=payload) 失敗"
+    except Exception as e:
+        return f"requests.post(API_URL, headers=HEADERS, json=payload) 失敗，原因：{str(e)}"
     candidates = resp.json().get("candidates", [])
     if not candidates:
         return "response.json() No candidates."
