@@ -12,24 +12,66 @@ API_URL  = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-
 HEADERS  = {"Content-Type": "application/json"}
 
 # ── PostgreSQL 持久化 ───────────────────────────────────────
-def load_history():
-    conn = psycopg2.connect(os.environ["DATABASE_URL"])
-    cur  = conn.cursor()
-    cur.execute("SELECT role, content FROM conversation_history ORDER BY id ASC")
-    rows = cur.fetchall()
-    cur.close(); conn.close()
-
+def load_history(role='user', n=10):
+    """
+    根據role和n從資料庫載入對話歷史。
+    """
+    with psycopg2.connect(os.environ["DATABASE_URL"]) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT role, content
+                FROM conversation_history
+                WHERE role = %s
+                ORDER BY id DESC
+                LIMIT %s
+                """,
+                (role, n)
+            )
+            rows = cur.fetchall()
+    rows.reverse()
     return [{"role": r, "parts": [{"text": c}]} for r, c in rows]
 
-def save_history(history):
-    conn = psycopg2.connect(os.environ["DATABASE_URL"])
-    cur  = conn.cursor()
-    cur.execute("DELETE FROM conversation_history")
-    for entry in history:
-        role = entry["role"]
-        content = "".join(p["text"] for p in entry["parts"])
-        cur.execute("INSERT INTO conversation_history (role, content) VALUES (%s, %s)", (role, content))
-    conn.commit(); cur.close(); conn.close()
+def save_history(history,size_limit=0.9):
+    """
+    儲存對話歷史至資料庫。
+    若總資料表大小超過 size_limit GB(預設0.9GB)，會自動刪除最舊資料以釋放空間。
+    """
+    MAX_SIZE_BYTES = int(size_limit * 1024 * 1024 * 1024)
+    with psycopg2.connect(os.environ["DATABASE_URL"]) as conn:
+        with conn.cursor() as cur:
+            
+            # 1. 先儲存資料
+            for entry in history:
+                role = entry["role"]
+                content = "".join(p["text"] for p in entry["parts"])
+                cur.execute(
+                    "INSERT INTO conversation_history (role, content) VALUES (%s, %s)",
+                    (role, content)
+                )
+            
+            # 2. 確認目前的資料表大小
+            cur.execute("""
+                SELECT pg_total_relation_size('conversation_history')
+            """)
+            size_bytes = cur.fetchone()[0]
+            
+            # 3. 若超過上限，刪除最舊資料（例如一筆一筆刪直到小於限制）
+            while size_bytes > MAX_SIZE_BYTES:
+                # 刪除最舊的一筆
+                cur.execute("""
+                    DELETE FROM conversation_history
+                    WHERE id = (
+                        SELECT id FROM conversation_history ORDER BY id ASC LIMIT 1
+                    )
+                """)
+                conn.commit()
+                
+                # 更新目前大小
+                cur.execute("""
+                    SELECT pg_total_relation_size('conversation_history')
+                """)
+                size_bytes = cur.fetchone()[0]
 
 # ── 建立向量索引並檢索相似對話 ────────────────────────────
 def retrieve_similar(history: list[dict], query_text: str, k: int = 3) -> list[dict]:
@@ -37,34 +79,28 @@ def retrieve_similar(history: list[dict], query_text: str, k: int = 3) -> list[d
     vectorizer = TfidfVectorizer()
     tfidf_matrix = vectorizer.fit_transform(texts)  # 對話歷史文本向量
     query_vec = vectorizer.transform([query_text]) # 查詢文本向量
-    
     similarities = cosine_similarity(query_vec, tfidf_matrix).flatten()
     top_indices = similarities.argsort()[-k:][::-1]
-
-    return [
-        {
-            "role": history[i]["role"],
-            "parts": [{"text": texts[i]}]
-        }
-        for i in top_indices
-    ]
+    return [{"role": history[i]["role"],"parts": [{"text": texts[i]}]} for i in top_indices]
 
 # ── 核心：query ────────────────────────────────────────────
 def query(user_message: str) -> str:
-    full_history = load_history()
+    # 撈取資料庫中user說過的話,電腦說的話就不撈節省空間,而且重點該放在user的話這樣user才會感覺AI有在記憶user說的話
+    # 這裡本來是要把資料庫資料全撈當作full_history 還是限制100則 比較省空間
+    full_history = load_history(role='user',n=100) 
 
-    # RAG：找出與 user_message 最相近的 k 則舊訊息
-    retrieved = retrieve_similar(full_history, user_message, k=1)
+    # RAG：從full_history找出與 user_message 最相近的 k 則訊息
+    retrieved = retrieve_similar(full_history, user_message, k=3)
 
-    # 固定保留最近三輪對話（共 n 則）作短期記憶
-    n = 2
-    short_window = full_history[-n:]
+    # 固定保留最近10則對話作短期記憶
+    short_window = full_history[-10:]
 
     # 組合成「檢索到的長期記憶」+「短期記憶」+「新 user 提問」
     context_for_llm = retrieved + short_window + [
         {"role": "user", "parts": [{"text": user_message}]}
     ]
 
+    # 傳給API的payload
     payload = {
         "contents": context_for_llm,
         "system_instruction": {
@@ -77,16 +113,18 @@ def query(user_message: str) -> str:
         }
     }
 
+    # 呼叫API
     try:
         resp = requests.post(API_URL, headers=HEADERS, json=payload)
         resp.raise_for_status()
     except Exception:
-        return "API 呼叫失敗"
+        return "requests.post(API_URL, headers=HEADERS, json=payload) 失敗"
 
     candidates = resp.json().get("candidates", [])
     if not candidates:
-        return "No response from Gemini."
+        return "response.json() No candidates."
 
+    # AI回應
     ai_response = candidates[0]["content"]["parts"][0]["text"]
 
     # 將本輪 user / model 對話寫回資料庫（完整持久化）

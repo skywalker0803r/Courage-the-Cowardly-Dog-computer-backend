@@ -7,11 +7,15 @@ import json
 from google.cloud import texttospeech
 from google.oauth2 import service_account
 
+# APP設定
 app = Flask(__name__)
 CORS(app)
+
+# GOOGLE_APPLICATION_CREDENTIALS_JSON設定以使用texttospeech服務
 credentials = service_account.Credentials.from_service_account_info(json.loads(os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")))
 tts_client = texttospeech.TextToSpeechClient(credentials=credentials)
 
+# 文字轉語音函數
 def text_to_speech(text):
     synthesis_input = texttospeech.SynthesisInput(text=text)
 
@@ -30,6 +34,7 @@ def text_to_speech(text):
     audio_base64 = base64.b64encode(response.audio_content).decode("utf-8")
     return audio_base64
 
+# 問答路由 接受 user_message 返回 reply(AI回覆)
 @app.route("/ask", methods=["POST"])
 def ask():
     data = request.get_json()
