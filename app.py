@@ -38,11 +38,12 @@ def text_to_speech(text):
 @app.route("/ask", methods=["POST"])
 def ask():
     data = request.get_json()
+    user_id = data.get("user_id")
     user_message = data.get("message", "")
     if not user_message:
         return jsonify({"error": "No message provided"}), 400
     try:
-        reply = query(user_message)
+        reply = query(user_message, user_id)
         audio_base64 = text_to_speech(reply)
         return jsonify({"reply": reply, "audio": audio_base64})
     except Exception as e:
