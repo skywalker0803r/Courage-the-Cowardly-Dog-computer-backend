@@ -7,6 +7,7 @@ import base64
 import json
 from google.cloud import texttospeech
 from google.oauth2 import service_account
+import traceback # <-- 新增這一行
 
 # APP設定
 app = FastAPI()
@@ -37,24 +38,32 @@ except Exception as e:
 # 文字轉語音函數
 def text_to_speech(text: str) -> str:
     if not tts_client:
-        raise RuntimeError("Text-to-Speech client is not initialized.")
+        # 如果 TTS 客戶端未初始化，直接返回一個預設的語音錯誤訊息
+        print("Text-to-Speech client is not initialized. Skipping audio generation.")
+        # 你可以返回一個空的 base64 字串或者一個預設的錯誤音訊
+        return "" 
+    try:
+        synthesis_input = texttospeech.SynthesisInput(text=text)
 
-    synthesis_input = texttospeech.SynthesisInput(text=text)
+        voice = texttospeech.VoiceSelectionParams(
+            language_code="cmn-CN",
+            name="cmn-CN-Chirp3-HD-Fenrir"
+        )
+        audio_config = texttospeech.AudioConfig(audio_encoding=texttospeech.AudioEncoding.MP3)
 
-    voice = texttospeech.VoiceSelectionParams(
-        language_code="cmn-CN",
-        name="cmn-CN-Chirp3-HD-Fenrir"
-    )
-    audio_config = texttospeech.AudioConfig(audio_encoding=texttospeech.AudioEncoding.MP3)
+        response = tts_client.synthesize_speech(
+            input=synthesis_input,
+            voice=voice,
+            audio_config=audio_config
+        )
+        # 將音訊內容轉 base64 字串
+        audio_base64 = base64.b64encode(response.audio_content).decode("utf-8")
+        return audio_base64
+    except Exception as e:
+        print(f"Error during Text-to-Speech synthesis: {e}")
+        traceback.print_exc() # 打印 TTS 錯誤的詳細堆疊追蹤
+        return "" # 返回空字串表示語音生成失敗
 
-    response = tts_client.synthesize_speech(
-        input=synthesis_input,
-        voice=voice,
-        audio_config=audio_config
-    )
-    # 將音訊內容轉 base64 字串
-    audio_base64 = base64.b64encode(response.audio_content).decode("utf-8")
-    return audio_base64
 
 # 問答路由 接受 user_message 返回 reply(AI回覆)
 @app.post("/ask")
@@ -72,10 +81,12 @@ async def ask(request: Request):
 
     try:
         reply = query(user_message, user_id)
-        audio_base64 = text_to_speech(reply)
+        audio_base64 = text_to_speech(reply) # 即使 TTS 失敗，reply 還是會被回傳
         return JSONResponse(content={"reply": reply, "audio": audio_base64})
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"Error in /ask endpoint: {e}") # 打印錯誤訊息
+        traceback.print_exc() # <-- 關鍵：打印完整的錯誤堆疊追蹤
+        raise HTTPException(status_code=500, detail="Internal Server Error: " + str(e)) # 給前端更詳細的錯誤訊息
 
 if __name__ == "__main__":
     import uvicorn
