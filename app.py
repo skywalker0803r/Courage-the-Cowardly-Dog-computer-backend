@@ -15,9 +15,12 @@ app = FastAPI()
 # Allow all origins for development, specify production origins later
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Adjust this to your frontend's actual origin(s) in production
+    allow_origins=[
+        "https://courage-the-cowardly-dog-computer.onrender.com", # 你的前端應用程式網址
+        # 如果你有其他需要訪問API的來源，也可以在這裡添加
+    ],
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"], # 明確指定允許的方法，尤其是OPTIONS
     allow_headers=["*"],
 )
 
@@ -76,4 +79,4 @@ async def ask(request: Request):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=10000)
+    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 10000))) # 使用環境變數PORT，否則預設8000
