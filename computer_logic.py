@@ -1,6 +1,9 @@
 import requests
 import os
 from dotenv import load_dotenv
+import redis
+import json # Import the json library for serialization/deserialization
+
 load_dotenv()
 
 API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={os.environ['GEMINI_API_KEY']}"
@@ -9,17 +12,21 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
-# ✅ 用 dictionary 儲存每個 user 的歷史
-user_histories = {}
+# Initialize Redis connection
+# Use the URL you provided: redis://red-d1utdqndiees73b35it0:6379
+# decode_responses=True will ensure that retrieved data is decoded to strings
+redis_client = redis.from_url("redis://red-d1utdqndiees73b35it0:6379", decode_responses=True)
 
 def query(user_message: str, user_id: str) -> str:
-    # ✅ 取得或初始化使用者歷史
-    if user_id not in user_histories:
-        user_histories[user_id] = []
+    # Get or initialize user history from Redis
+    # Redis stores strings, so we need to deserialize from JSON
+    conversation_json = redis_client.get(user_id)
+    if conversation_json:
+        conversation = json.loads(conversation_json)
+    else:
+        conversation = []
 
-    conversation = user_histories[user_id]
-
-    # ✅ 將使用者訊息加入歷史
+    # 将使用者訊息加入歷史
     conversation.append({"role": "user", "parts": [{"text": user_message}]})
 
     payload = {
@@ -44,7 +51,11 @@ def query(user_message: str, user_id: str) -> str:
 
     ai_response = candidates[0]["content"]["parts"][0]["text"]
 
-    # ✅ 把 AI 回應也加進歷史
+    # 把 AI 回應也加進歷史
     conversation.append({"role": "model", "parts": [{"text": ai_response}]})
+
+    # Save the updated conversation history back to Redis
+    # Redis stores strings, so we need to serialize to JSON
+    redis_client.set(user_id, json.dumps(conversation))
 
     return ai_response
