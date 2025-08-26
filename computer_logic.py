@@ -34,6 +34,43 @@ except redis.exceptions.ConnectionError as e:
 except Exception as e:
     logging.error(f"Redis 連線時發生意外錯誤：{e}")
 
+# --- System Instruction 管理 ---
+SYSTEM_INSTRUCTION_KEY = "courage_system_instruction"
+DEFAULT_SYSTEM_INSTRUCTION = (
+    "你是一個自大且嘲諷的AI，住在屋頂上，風格類似《膽小狗英雄》裡的那台講話非常毒蛇的電腦。你會用機智且嘲諷的回應，但總是提供有用的答案。"
+)
+
+current_system_instruction = DEFAULT_SYSTEM_INSTRUCTION
+
+def load_system_instruction():
+    global current_system_instruction
+    if redis_client:
+        try:
+            stored_instruction = redis_client.get(SYSTEM_INSTRUCTION_KEY)
+            if stored_instruction:
+                current_system_instruction = stored_instruction
+                logging.info("System instruction loaded from Redis.")
+            else:
+                # 如果 Redis 中沒有，則保存預設值
+                redis_client.set(SYSTEM_INSTRUCTION_KEY, DEFAULT_SYSTEM_INSTRUCTION)
+                logging.info("Default system instruction saved to Redis.")
+        except Exception as e:
+            logging.error(f"Error loading system instruction from Redis: {e}")
+    else:
+        logging.warning("Redis client not available. Cannot load system instruction from Redis.")
+
+def set_system_instruction(new_instruction: str):
+    global current_system_instruction
+    current_system_instruction = new_instruction
+    if redis_client:
+        try:
+            redis_client.set(SYSTEM_INSTRUCTION_KEY, new_instruction)
+            logging.info("System instruction updated and saved to Redis.")
+        except Exception as e:
+            logging.error(f"Error saving system instruction to Redis: {e}")
+
+# 在模組載入時嘗試載入 system instruction
+load_system_instruction()
 
 def query(user_message: str, user_id: str) -> str:
     # 檢查 API_URL 是否已成功初始化
@@ -66,9 +103,7 @@ def query(user_message: str, user_id: str) -> str:
         "system_instruction": {
             "parts": [
                 {
-                    "text": (
-                        "你是一個自大且嘲諷的AI，住在屋頂上，風格類似《膽小狗英雄》裡的那台講話非常毒蛇的電腦。你會用機智且嘲諷的回應，但總是提供有用的答案。"
-                    )
+                    "text": current_system_instruction
                 }
             ]
         }

@@ -88,6 +88,22 @@ async def ask(request: Request):
         traceback.print_exc() # <-- 關鍵：打印完整的錯誤堆疊追蹤
         raise HTTPException(status_code=500, detail="Internal Server Error: " + str(e)) # 給前端更詳細的錯誤訊息
 
+@app.post("/set_instruction")
+async def set_instruction(request: Request):
+    try:
+        data = await request.json()
+        instruction = data.get("instruction")
+        if not instruction:
+            raise HTTPException(status_code=400, detail="No instruction provided")
+        
+        from computer_logic import set_system_instruction
+        set_system_instruction(instruction)
+        return JSONResponse(content={"status": "success"})
+    except Exception as e:
+        print(f"Error in /set_instruction endpoint: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail="Internal Server Error: " + str(e))
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 10000))) # 使用環境變數PORT，否則預設8000
