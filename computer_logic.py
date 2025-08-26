@@ -66,6 +66,18 @@ def set_system_instruction(new_instruction: str):
         try:
             redis_client.set(SYSTEM_INSTRUCTION_KEY, new_instruction)
             logging.info("System instruction updated and saved to Redis.")
+
+            # 清除所有使用者的對話歷史
+            try:
+                # 查找所有以 "user_" 開頭的 key
+                user_conversation_keys = redis_client.keys("user_*")
+                if user_conversation_keys:
+                    redis_client.delete(*user_conversation_keys)
+                    logging.info(f"已清除 {len(user_conversation_keys)} 個使用者的對話歷史。")
+                else:
+                    logging.info("沒有找到需要清除的使用者對話歷史。")
+            except Exception as e:
+                logging.error(f"清除使用者對話歷史時發生錯誤：{e}")
         except Exception as e:
             logging.error(f"Error saving system instruction to Redis: {e}")
 
