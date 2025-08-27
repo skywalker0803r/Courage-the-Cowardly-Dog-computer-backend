@@ -35,7 +35,6 @@ except Exception as e:
     logging.error(f"Redis 連線時發生意外錯誤：{e}")
 
 # --- System Instruction 管理 ---
-SYSTEM_INSTRUCTION_KEY = "courage_system_instruction"
 DEFAULT_SYSTEM_INSTRUCTION = (
     "你是一位專業的金融業主管，正在與一位員工進行績效面談。\n" \
     "員工的工作內容：放貸與基金銷售。\n" \
@@ -52,49 +51,41 @@ DEFAULT_SYSTEM_INSTRUCTION = (
     "你的最終目標：模擬一場真實的績效面談，並生成一份可提供給真正金融業主管參考的報告。"
 )
 
-current_system_instruction = DEFAULT_SYSTEM_INSTRUCTION
-
-def load_system_instruction():
-    global current_system_instruction
+def load_system_instruction(user_id: str):
     if redis_client:
         try:
-            stored_instruction = redis_client.get(SYSTEM_INSTRUCTION_KEY)
+            instruction_key = f"user_instruction_{user_id}"
+            stored_instruction = redis_client.get(instruction_key)
             if stored_instruction:
-                current_system_instruction = stored_instruction
-                logging.info("System instruction loaded from Redis.")
+                logging.info(f"System instruction loaded from Redis for user {user_id}.")
+                return stored_instruction
             else:
                 # 如果 Redis 中沒有，則保存預設值
-                redis_client.set(SYSTEM_INSTRUCTION_KEY, DEFAULT_SYSTEM_INSTRUCTION)
-                logging.info("Default system instruction saved to Redis.")
+                redis_client.set(instruction_key, DEFAULT_SYSTEM_INSTRUCTION)
+                logging.info(f"Default system instruction saved to Redis for user {user_id}.")
+                return DEFAULT_SYSTEM_INSTRUCTION
         except Exception as e:
-            logging.error(f"Error loading system instruction from Redis: {e}")
+            logging.error(f"Error loading system instruction from Redis for user {user_id}: {e}")
+            return DEFAULT_SYSTEM_INSTRUCTION # Return default on error
     else:
-        logging.warning("Redis client not available. Cannot load system instruction from Redis.")
+        logging.warning("Redis client not available. Cannot load system instruction from Redis. Using default.")
+        return DEFAULT_SYSTEM_INSTRUCTION # Return default if Redis not available
 
-def set_system_instruction(new_instruction: str):
-    global current_system_instruction
-    current_system_instruction = new_instruction
+def set_system_instruction(user_id: str, new_instruction: str):
     if redis_client:
         try:
-            redis_client.set(SYSTEM_INSTRUCTION_KEY, new_instruction)
-            logging.info("System instruction updated and saved to Redis.")
+            instruction_key = f"user_instruction_{user_id}"
+            redis_client.set(instruction_key, new_instruction)
+            logging.info(f"System instruction updated and saved to Redis for user {user_id}.")
 
-            # 清除所有使用者的對話歷史
-            try:
-                # 查找所有以 "user_" 開頭的 key
-                user_conversation_keys = redis_client.keys("user_*")
-                if user_conversation_keys:
-                    redis_client.delete(*user_conversation_keys)
-                    logging.info(f"已清除 {len(user_conversation_keys)} 個使用者的對話歷史。")
-                else:
-                    logging.info("沒有找到需要清除的使用者對話歷史。")
-            except Exception as e:
-                logging.error(f"清除使用者對話歷史時發生錯誤：{e}")
+            # 清除該使用者的對話歷史
+            redis_client.delete(user_id)
+            logging.info(f"Cleared conversation history for user {user_id} due to system instruction change.")
+
         except Exception as e:
-            logging.error(f"Error saving system instruction to Redis: {e}")
+            logging.error(f"Error saving system instruction or clearing history for user {user_id}: {e}")
 
-# 在模組載入時嘗試載入 system instruction
-load_system_instruction()
+
 
 def query(user_message: str, user_id: str) -> str:
     # 檢查 API_URL 是否已成功初始化
@@ -122,12 +113,14 @@ def query(user_message: str, user_id: str) -> str:
     # 將使用者訊息加入歷史
     conversation.append({"role": "user", "parts": [{"text": user_message}]})
 
+    user_system_instruction = load_system_instruction(user_id)
+
     payload = {
         "contents": conversation.copy(),  # 傳過去之前複製，避免被 Gemini 修改歷史
         "system_instruction": {
             "parts": [
                 {
-                    "text": current_system_instruction
+                    "text": user_system_instruction
                 }
             ]
         }

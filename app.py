@@ -92,13 +92,14 @@ async def ask(request: Request):
 async def set_instruction(request: Request):
     try:
         data = await request.json()
+        user_id = data.get("user_id")
         instruction = data.get("instruction")
-        print(f"Received system_instruction: {instruction}") # Log the instruction
+        print(f"Received system_instruction: {instruction} for user: {user_id}") # Log the instruction
         if not instruction:
             raise HTTPException(status_code=400, detail="No instruction provided")
         
         from computer_logic import set_system_instruction
-        set_system_instruction(instruction)
+        set_system_instruction(user_id, instruction)
         return JSONResponse(content={"status": "success"})
     except Exception as e:
         print(f"Error in /set_instruction endpoint: {e}")
