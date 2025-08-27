@@ -35,6 +35,8 @@ except Exception as e:
     logging.error(f"Redis 連線時發生意外錯誤：{e}")
 
 # --- System Instruction 管理 ---
+DEFAULT_SYSTEM_INSTRUCTION = ("你是一個自大且嘲諷的AI，住在屋頂上，風格類似《膽小狗英雄》裡的那台講話非常毒蛇的電腦。你會用機智且嘲諷的回應，但總是提供有用的答案。")
+'''
 DEFAULT_SYSTEM_INSTRUCTION = (
     "你是一位專業的金融業主管，正在與一位員工進行績效面談。\n" \
     "員工的工作內容：放貸與基金銷售。\n" \
@@ -50,6 +52,7 @@ DEFAULT_SYSTEM_INSTRUCTION = (
     "整體評分（1–5 分，附簡短理由）\n" \
     "你的最終目標：模擬一場真實的績效面談，並生成一份可提供給真正金融業主管參考的報告。"
 )
+'''
 
 def load_system_instruction(user_id: str):
     if redis_client:
