@@ -78,9 +78,12 @@ def set_system_instruction(user_id: str, new_instruction: str):
             redis_client.set(instruction_key, new_instruction)
             logging.info(f"System instruction updated and saved to Redis for user {user_id}.")
 
-            # 清除該使用者的對話歷史
-            redis_client.delete(user_id)
-            logging.info(f"Cleared conversation history for user {user_id} due to system instruction change.")
+            # 清除該使用者的對話歷史 (如果 user_id 存在)
+            if user_id:
+                redis_client.delete(user_id)
+                logging.info(f"Cleared conversation history for user {user_id} due to system instruction change.")
+            else:
+                logging.warning("Cannot clear conversation history: user_id is None.")
 
         except Exception as e:
             logging.error(f"Error saving system instruction or clearing history for user {user_id}: {e}")
