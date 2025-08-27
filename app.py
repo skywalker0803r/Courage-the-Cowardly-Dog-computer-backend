@@ -93,6 +93,7 @@ async def set_instruction(request: Request):
     try:
         data = await request.json()
         instruction = data.get("instruction")
+        print(f"Received system_instruction: {instruction}") # Log the instruction
         if not instruction:
             raise HTTPException(status_code=400, detail="No instruction provided")
         
