@@ -44,44 +44,61 @@ def text_to_speech(text: str) -> str:
 
     MAX_TTS_BYTES = 800  # Set a slightly lower limit than 900 for safety
 
+    audio_content_parts = []
+    
+    # Helper to split a long string into chunks respecting MAX_TTS_BYTES
+    def _split_long_text_into_chunks(long_text: str, max_bytes: int):
+        current_chunk_bytes = 0
+        current_chunk_chars = []
+        
+        for char in long_text:
+            char_bytes = len(char.encode('utf-8'))
+            if current_chunk_bytes + char_bytes > max_bytes:
+                yield "".join(current_chunk_chars)
+                current_chunk_chars = [char]
+                current_chunk_bytes = char_bytes
+            else:
+                current_chunk_chars.append(char)
+                current_chunk_bytes += char_bytes
+        if current_chunk_chars:
+            yield "".join(current_chunk_chars)
+
     # Split text by common Chinese and English sentence-ending punctuation, keeping delimiters
-    # This regex splits but also captures the delimiters so they can be re-added.
-    # It also handles cases where there might be multiple delimiters or no space after.
     sentence_delimiters_pattern = r'([。？！；.?!])'
-    # Use re.split to keep the delimiters. This will result in a list like [text, delimiter, text, delimiter, ...]
     parts = re.split(sentence_delimiters_pattern, text)
 
-    audio_content_parts = []
-    current_chunk = ""
+    current_sentence_buffer = ""
 
     for part in parts:
         if not part.strip():
             continue
 
-        # Check if the part is a delimiter
-        is_delimiter = re.fullmatch(sentence_delimiters_pattern, part)
-
-        # If adding the current part (or delimiter) makes the chunk too long,
-        # synthesize the current_chunk and start a new one.
-        # We encode to utf-8 to get byte length
-        if len((current_chunk + part).encode('utf-8')) > MAX_TTS_BYTES:
-            if current_chunk.strip():  # Synthesize if there's content
-                audio_content_parts.extend(synthesize_chunk(current_chunk.strip(), tts_client))
-            current_chunk = part  # Start new chunk with the current part
+        # If the part itself is too long, split it further
+        if len(part.encode('utf-8')) > MAX_TTS_BYTES:
+            if current_sentence_buffer.strip(): # Synthesize anything in buffer before handling long part
+                audio_content_parts.extend(synthesize_chunk(current_sentence_buffer.strip(), tts_client))
+                current_sentence_buffer = ""
+            
+            for sub_chunk in _split_long_text_into_chunks(part, MAX_TTS_BYTES):
+                if sub_chunk.strip():
+                    audio_content_parts.extend(synthesize_chunk(sub_chunk.strip(), tts_client))
         else:
-            current_chunk += part
+            # Check if adding the part makes the current buffer too long
+            if len((current_sentence_buffer + part).encode('utf-8')) > MAX_TTS_BYTES:
+                if current_sentence_buffer.strip():
+                    audio_content_parts.extend(synthesize_chunk(current_sentence_buffer.strip(), tts_client))
+                current_sentence_buffer = part
+            else:
+                current_sentence_buffer += part
 
-        # If the current chunk (after adding part) is a complete sentence (ends with a delimiter)
-        # or if it's a very long chunk that needs to be broken down further, synthesize it.
-        # This handles cases where a sentence might be very long but doesn't have internal delimiters.
-        if is_delimiter or len(current_chunk.encode('utf-8')) >= MAX_TTS_BYTES:
-            if current_chunk.strip():
-                audio_content_parts.extend(synthesize_chunk(current_chunk.strip(), tts_client))
-            current_chunk = ""  # Reset chunk after synthesizing
+            # If the part is a delimiter, or if the buffer is now a complete sentence, synthesize
+            if re.fullmatch(sentence_delimiters_pattern, part) and current_sentence_buffer.strip():
+                audio_content_parts.extend(synthesize_chunk(current_sentence_buffer.strip(), tts_client))
+                current_sentence_buffer = ""
 
-    # Synthesize any remaining chunk
-    if current_chunk.strip():
-        audio_content_parts.extend(synthesize_chunk(current_chunk.strip(), tts_client))
+    # Synthesize any remaining buffer
+    if current_sentence_buffer.strip():
+        audio_content_parts.extend(synthesize_chunk(current_sentence_buffer.strip(), tts_client))
 
     # Concatenate all audio content parts
     combined_audio_content = b"".join(audio_content_parts)
